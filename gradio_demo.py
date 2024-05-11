@@ -1,4 +1,5 @@
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import math
 import gradio as gr
 import numpy as np
@@ -52,7 +53,8 @@ unet.forward = hooked_unet_forward
 model_path = './models/iclight_sd15_fc.safetensors'
 
 if not os.path.exists(model_path):
-    download_url_to_file(url='https://huggingface.co/lllyasviel/ic-light/resolve/main/iclight_sd15_fc.safetensors', dst=model_path)
+    download_url_to_file(url='https://hf-mirror.com/lllyasviel/ic-light/resolve/main/iclight_sd15_fc.safetensors', dst=model_path)
+    # 用这个huggingface-cli下载更快：huggingface-cli download --resume-download lllyasviel/ic-light iclight_sd15_fc.safetensors --local-dir ./
 
 sd_offset = sf.load_file(model_path)
 sd_origin = unet.state_dict()

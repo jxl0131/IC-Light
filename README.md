@@ -6,6 +6,8 @@ The name "IC-Light" stands for **"Imposing Consistent Light"** (we will briefly 
 
 Currently, we release two types of models: text-conditioned relighting model and background-conditioned model. Both types take foreground images as inputs.
 
+最多需要5G进行推理。
+
 # Get Started
 
 Below script will run the text-conditioned relighting model:
@@ -14,7 +16,7 @@ Below script will run the text-conditioned relighting model:
     cd IC-Light
     conda create -n iclight python=3.10
     conda activate iclight
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 # torch==2.0.1 torchvision==0.15.2 for 814
     pip install -r requirements.txt
     python gradio_demo.py
 

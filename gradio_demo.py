@@ -15,6 +15,12 @@ from briarmbg import BriaRMBG
 from enum import Enum
 from torch.hub import download_url_to_file
 
+########## auto fetch gpus ##############
+queue = [[1,5000]] # expect 5G
+import gpusHelper
+os.environ["CUDA_VISIBLE_DEVICES"] = gpusHelper.get_CUDA_VISIBLE_DEVICES(queue)#当前空闲的GPU
+#########################################
+
 
 # 'stablediffusionapi/realistic-vision-v51'
 # 'runwayml/stable-diffusion-v1-5'

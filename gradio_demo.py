@@ -240,6 +240,7 @@ def process(input_fg, prompt, image_width, image_height, num_samples, seed, step
 
     if bg_source == BGSource.NONE:
         pass
+    # 直接根据方向选择生成背景图
     elif bg_source == BGSource.LEFT:
         gradient = np.linspace(255, 0, image_width)
         image = np.tile(gradient, (image_height, 1))
@@ -285,6 +286,8 @@ def process(input_fg, prompt, image_width, image_height, num_samples, seed, step
         bg = resize_and_center_crop(input_bg, image_width, image_height)
         bg_latent = numpy2pytorch([bg]).to(device=vae.device, dtype=vae.dtype)
         bg_latent = vae.encode(bg_latent).latent_dist.mode() * vae.config.scaling_factor
+        
+        # 图生图，背景图片、前景图片和提示词共同作用
         latents = i2i_pipe(
             image=bg_latent,
             strength=lowres_denoise,
@@ -318,6 +321,7 @@ def process(input_fg, prompt, image_width, image_height, num_samples, seed, step
     concat_conds = numpy2pytorch([fg]).to(device=vae.device, dtype=vae.dtype)
     concat_conds = vae.encode(concat_conds).latent_dist.mode() * vae.config.scaling_factor
 
+    # 图生图，重光照结果、前景图片和提示词共同作用
     latents = i2i_pipe(
         image=latents,
         strength=highres_denoise,

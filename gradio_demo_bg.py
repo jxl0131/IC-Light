@@ -236,10 +236,13 @@ def run_rmbg(img, sigma=0.0):
 def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source):
     bg_source = BGSource(bg_source)
 
+    ## 默认背景是用户上传的背景
     if bg_source == BGSource.UPLOAD:
         pass
     elif bg_source == BGSource.UPLOAD_FLIP:
         input_bg = np.fliplr(input_bg)
+        
+    ## 如果没有上传的背景，就按照方向生成背景
     elif bg_source == BGSource.GREY:
         input_bg = np.zeros(shape=(image_height, image_width, 3), dtype=np.uint8) + 64
     elif bg_source == BGSource.LEFT:
@@ -263,14 +266,17 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
 
     rng = torch.Generator(device=device).manual_seed(seed)
 
+    # 前、背景拼接编码
     fg = resize_and_center_crop(input_fg, image_width, image_height)
     bg = resize_and_center_crop(input_bg, image_width, image_height)
     concat_conds = numpy2pytorch([fg, bg]).to(device=vae.device, dtype=vae.dtype)
     concat_conds = vae.encode(concat_conds).latent_dist.mode() * vae.config.scaling_factor
     concat_conds = torch.cat([c[None, ...] for c in concat_conds], dim=1)
 
+    # prompt编码
     conds, unconds = encode_prompt_pair(positive_prompt=prompt + ', ' + a_prompt, negative_prompt=n_prompt)
 
+    # 文生图流程，前背景和提示词共同作用
     latents = t2i_pipe(
         prompt_embeds=conds,
         negative_prompt_embeds=unconds,
@@ -284,6 +290,7 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
         cross_attention_kwargs={'concat_conds': concat_conds},
     ).images.to(vae.dtype) / vae.config.scaling_factor
 
+    # 解码成重光照后的图片
     pixels = vae.decode(latents).sample
     pixels = pytorch2numpy(pixels)
     pixels = [resize_without_crop(
@@ -292,10 +299,12 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
         target_height=int(round(image_height * highres_scale / 64.0) * 64))
     for p in pixels]
 
+    # 文生图得到的重光照图片编码
     pixels = numpy2pytorch(pixels).to(device=vae.device, dtype=vae.dtype)
     latents = vae.encode(pixels).latent_dist.mode() * vae.config.scaling_factor
     latents = latents.to(device=unet.device, dtype=unet.dtype)
 
+    # 前背景图片再次编码
     image_height, image_width = latents.shape[2] * 8, latents.shape[3] * 8
     fg = resize_and_center_crop(input_fg, image_width, image_height)
     bg = resize_and_center_crop(input_bg, image_width, image_height)
@@ -303,6 +312,7 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
     concat_conds = vae.encode(concat_conds).latent_dist.mode() * vae.config.scaling_factor
     concat_conds = torch.cat([c[None, ...] for c in concat_conds], dim=1)
 
+    # 图生图流程，重光照图片、提示词和前背景图片共同作用
     latents = i2i_pipe(
         image=latents,
         strength=highres_denoise,
@@ -318,6 +328,7 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
         cross_attention_kwargs={'concat_conds': concat_conds},
     ).images.to(vae.dtype) / vae.config.scaling_factor
 
+    # 解码，得到最终图片
     pixels = vae.decode(latents).sample
     pixels = pytorch2numpy(pixels, quant=False)
 

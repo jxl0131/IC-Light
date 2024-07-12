@@ -29,7 +29,7 @@ rmbg = BriaRMBG.from_pretrained("briaai/RMBG-1.4")
 # Change UNet
 
 with torch.no_grad():
-    new_conv_in = torch.nn.Conv2d(12, unet.conv_in.out_channels, unet.conv_in.kernel_size, unet.conv_in.stride, unet.conv_in.padding)
+    new_conv_in = torch.nn.Conv2d(12, unet.conv_in.out_channels, unet.conv_in.kernel_size, unet.conv_in.stride, unet.conv_in.padding)#从bz,4,80,64变成bz,12,80,64
     new_conv_in.weight.zero_()
     new_conv_in.weight[:, :4, :, :].copy_(unet.conv_in.weight)
     new_conv_in.bias = unet.conv_in.bias
@@ -40,7 +40,7 @@ unet_original_forward = unet.forward
 
 def hooked_unet_forward(sample, timestep, encoder_hidden_states, **kwargs):
     c_concat = kwargs['cross_attention_kwargs']['concat_conds'].to(sample)
-    c_concat = torch.cat([c_concat] * (sample.shape[0] // c_concat.shape[0]), dim=0)
+    c_concat = torch.cat([c_concat] * (sample.shape[0] // c_concat.shape[0]), dim=0)#复制多份使其与sample的batch_size相同
     new_sample = torch.cat([sample, c_concat], dim=1)
     kwargs['cross_attention_kwargs'] = {}
     return unet_original_forward(new_sample, timestep, encoder_hidden_states, **kwargs)
@@ -58,7 +58,7 @@ if not os.path.exists(model_path):
 sd_offset = sf.load_file(model_path)
 sd_origin = unet.state_dict()
 keys = sd_origin.keys()
-sd_merged = {k: sd_origin[k] + sd_offset[k] for k in sd_origin.keys()}
+sd_merged = {k: sd_origin[k] + sd_offset[k] for k in sd_origin.keys()}#lora
 unet.load_state_dict(sd_merged, strict=True)
 del sd_offset, sd_origin, sd_merged, keys
 
@@ -269,8 +269,8 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
     # 前、背景拼接编码
     fg = resize_and_center_crop(input_fg, image_width, image_height)
     bg = resize_and_center_crop(input_bg, image_width, image_height)
-    concat_conds = numpy2pytorch([fg, bg]).to(device=vae.device, dtype=vae.dtype)
-    concat_conds = vae.encode(concat_conds).latent_dist.mode() * vae.config.scaling_factor
+    concat_conds = numpy2pytorch([fg, bg]).to(device=vae.device, dtype=vae.dtype)#前背景拼接
+    concat_conds = vae.encode(concat_conds).latent_dist.mode() * vae.config.scaling_factor#前背景拼接编码
     concat_conds = torch.cat([c[None, ...] for c in concat_conds], dim=1)
 
     # prompt编码
@@ -287,7 +287,7 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
         generator=rng,
         output_type='latent',
         guidance_scale=cfg,
-        cross_attention_kwargs={'concat_conds': concat_conds},
+        cross_attention_kwargs={'concat_conds': concat_conds},#传入给修改后的unet
     ).images.to(vae.dtype) / vae.config.scaling_factor
 
     # 解码成重光照后的图片
@@ -297,7 +297,7 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
         image=p,
         target_width=int(round(image_width * highres_scale / 64.0) * 64),
         target_height=int(round(image_height * highres_scale / 64.0) * 64))
-    for p in pixels]
+    for p in pixels]#扩大1.5倍
 
     # 文生图得到的重光照图片编码
     pixels = numpy2pytorch(pixels).to(device=vae.device, dtype=vae.dtype)
@@ -334,6 +334,13 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
 
     return pixels, [fg, bg]
 
+@torch.inference_mode()
+def get_mask(input_fg,path=None):
+    image_width = 768
+    image_height = 960
+    input_fg, matting = run_rmbg(input_fg)
+    mask = resize_and_center_crop(matting[...,0], image_width, image_height)
+    Image.fromarray((mask* 255).astype(np.uint8)).save(path)
 
 @torch.inference_mode()
 def process_relight(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source):
@@ -342,6 +349,79 @@ def process_relight(input_fg, input_bg, prompt, image_width, image_height, num_s
     results = [(x * 255.0).clip(0, 255).astype(np.uint8) for x in results]
     return results + extra_images
 
+class BGSource(Enum):
+    UPLOAD = "Use Background Image"
+    UPLOAD_FLIP = "Use Flipped Background Image"
+    LEFT = "Left Light"
+    RIGHT = "Right Light"
+    TOP = "Top Light"
+    BOTTOM = "Bottom Light"
+    GREY = "Ambient"
+
+if __name__== "__main__":
+    ## 生成重光照数据集
+    relight_dir = '/data/jixinlong/jixinlong/datasets/relight2/'
+    
+    # 1. 读取肖像数据集
+    portrait_dir = '/data/jixinlong/jixinlong/datasets/easyportrait/train'# 14000张
+    portrait_files = os.listdir(portrait_dir)
+    portrait_files = [os.path.join(portrait_dir, x) for x in portrait_files]
+    
+    # 2. 读取背景数据集
+    bg_dir = '/data/jixinlong/jixinlong/datasets/web/crop_ldr'# 1408张
+    bg_files = os.listdir(bg_dir)
+    bg_files = [os.path.join(bg_dir, x) for x in bg_files]
+    
+    # 3. 生成重光照数据集
+    import random,time
+    # 获取当前时间的数值形式
+    current_time = int(time.time())
+    # 将当前时间的数值形式用作随机数生成器的种子
+    random.seed(current_time)
+    for portrait_file in portrait_files:
+        for i in range(8):
+            # 随机选择背景
+            bg_file = random.choice(bg_files)
+            
+            input_fg = np.array(Image.open(portrait_file))
+                    
+            # mask_path = os.path.join(relight_dir+'mask', os.path.basename(portrait_file))#获取fg的mask，只需要生成一次
+            # get_mask(input_fg,mask_path)
+            # continue
+        
+            input_bg = np.array(Image.open(bg_file))
+            prompt = ''
+            image_width = 512
+            image_height = 640
+            num_samples = 1
+            seed = random.randint(0, 100000)
+            steps = 20
+            a_prompt = 'best quality'
+            n_prompt = 'lowres, bad anatomy, bad hands, cropped, worst quality'
+            cfg = 7.0
+            highres_scale = 1.5
+            highres_denoise = 0.5
+            bg_source = "Use Background Image"
+            
+
+            outputs  = process_relight(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source)
+
+            result = outputs[0] 
+            fg_cut,bg = outputs[1:] 
+            
+            sv_nm = os.path.basename(portrait_file).replace('.jpg','_{}.jpg'.format(i))
+            # 保存重光照结果
+            relight_file = os.path.join(relight_dir+'relight', sv_nm )
+            result = Image.fromarray(result)
+            result.save(relight_file)
+            # 保存fg
+            fg_cut_path = os.path.join(relight_dir+'fg', sv_nm )
+            fg_cut = Image.fromarray(fg_cut)
+            fg_cut.save(fg_cut_path)
+            # 保存bg
+            bg_path = os.path.join(relight_dir+'bg_new', sv_nm )
+            bg = Image.fromarray(bg)
+            bg.save(bg_path)
 
 @torch.inference_mode()
 def process_normal(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source):
@@ -405,14 +485,7 @@ quick_prompts = [
 quick_prompts = [[x] for x in quick_prompts]
 
 
-class BGSource(Enum):
-    UPLOAD = "Use Background Image"
-    UPLOAD_FLIP = "Use Flipped Background Image"
-    LEFT = "Left Light"
-    RIGHT = "Right Light"
-    TOP = "Top Light"
-    BOTTOM = "Bottom Light"
-    GREY = "Ambient"
+
 
 
 block = gr.Blocks().queue()
